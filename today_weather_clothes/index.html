@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>오날입 — 오늘 날씨에 입을 것</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&family=Noto+Sans+KR:wght@300;400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">🌤</span>
+        <span class="logo-text">오날입</span>
+        <span class="logo-sub">오늘 날씨에 입을 것</span>
+      </div>
+      <div class="header-controls">
+        <button class="ctrl-btn" id="unitToggle" title="온도 단위 변경">°C</button>
+        <button class="ctrl-btn" id="themeToggle" title="다크/라이트 모드 전환">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- Loading State -->
+    <div class="state-card" id="loadingState">
+      <div class="spinner"></div>
+      <p class="state-text">위치와 날씨 정보를<br/>불러오는 중이에요...</p>
+    </div>
+
+    <!-- Error State -->
+    <div class="state-card hidden" id="errorState">
+      <div class="state-icon">😔</div>
+      <p class="state-text" id="errorMessage">위치 권한이 거부되었습니다.</p>
+      <p class="state-hint">브라우저 설정에서 위치 권한을 허용한 뒤<br/>새로고침 해주세요.</p>
+      <button class="retry-btn" onclick="location.reload()">다시 시도</button>
+    </div>
+
+    <!-- Content -->
+    <div class="content hidden" id="mainContent">
+
+      <!-- Location & Weather Card -->
+      <div class="card weather-card">
+        <div class="weather-top">
+          <div class="location-wrap">
+            <span class="location-pin">📍</span>
+            <span class="location-name" id="locationName">서울</span>
+          </div>
+          <div class="date-wrap" id="dateWrap"></div>
+        </div>
+        <div class="weather-body">
+          <div class="weather-icon-wrap">
+            <div class="weather-emoji" id="weatherEmoji">☀️</div>
+            <div class="weather-orb"></div>
+          </div>
+          <div class="weather-info">
+            <div class="temp-main" id="tempMain">--°</div>
+            <div class="temp-feel">체감 <span id="tempFeel">--°</span></div>
+            <div class="weather-desc" id="weatherDesc">날씨 정보 없음</div>
+            <div class="weather-extras">
+              <span class="extra-item">💧 <span id="humidity">--%</span></span>
+              <span class="extra-item">💨 <span id="windSpeed">-- m/s</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Outfit Recommendation Card -->
+      <div class="card outfit-card">
+        <div class="card-label">오늘의 추천 코디</div>
+        <div class="outfit-message" id="outfitMessage"></div>
+        <div class="outfit-grid">
+          <div class="outfit-item">
+            <div class="outfit-item-icon" id="outfitTopIcon">👕</div>
+            <div class="outfit-item-label">상의</div>
+            <div class="outfit-item-value" id="outfitTopVal">--</div>
+          </div>
+          <div class="outfit-item">
+            <div class="outfit-item-icon" id="outfitBottomIcon">👖</div>
+            <div class="outfit-item-label">하의</div>
+            <div class="outfit-item-value" id="outfitBottomVal">--</div>
+          </div>
+          <div class="outfit-item">
+            <div class="outfit-item-icon" id="outfitShoesIcon">👟</div>
+            <div class="outfit-item-label">신발</div>
+            <div class="outfit-item-value" id="outfitShoesVal">--</div>
+          </div>
+          <div class="outfit-item" id="outfitExtraWrap" style="display:none;">
+            <div class="outfit-item-icon" id="outfitExtraIcon">☂️</div>
+            <div class="outfit-item-label">추가 아이템</div>
+            <div class="outfit-item-value" id="outfitExtraVal">--</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer hidden" id="footerSection">
+    <div class="footer-inner">
+      <div class="footer-card">
+        <span class="footer-icon">💡</span>
+        <div>
+          <div class="footer-title">추천 이유</div>
+          <div class="footer-reason" id="footerReason">--</div>
+        </div>
+      </div>
+      <div class="footer-credit">오날입 · 날씨 데이터: Open-Meteo &amp; Nominatim (OpenStreetMap)</div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
