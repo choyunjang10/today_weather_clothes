@@ -21,6 +21,7 @@
       </div>
       <div class="header-controls">
         <button class="ctrl-btn" id="unitToggle" title="온도 단위 변경">°C</button>
+        <button class="ctrl-btn music-btn" id="musicToggleBtn" title="음악 켜기">🔇</button>
         <button class="ctrl-btn" id="themeToggle" title="다크/라이트 모드 전환">🌙</button>
       </div>
     </div>
@@ -113,9 +114,14 @@
           <div class="footer-reason" id="footerReason">--</div>
         </div>
       </div>
-      <div class="footer-credit">오날입 · 날씨 데이터: Open-Meteo &amp; Nominatim (OpenStreetMap)</div>
+      <div class="footer-credit">오날입 · 날씨 데이터: 기상청 단기예보 (공공데이터포털) &amp; Nominatim (OpenStreetMap)</div>
     </div>
   </footer>
+
+  <!-- Music Hint Toast -->
+  <div class="music-hint hidden" id="musicHint">
+    🎵 음악 버튼을 눌러 날씨 BGM을 켜보세요!
+  </div>
 
   <script src="script.js"></script>
 </body>
