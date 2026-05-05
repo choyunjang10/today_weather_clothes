@@ -21,8 +21,27 @@
       </div>
       <div class="header-controls">
         <button class="ctrl-btn" id="unitToggle" title="온도 단위 변경">°C</button>
-        <button class="ctrl-btn music-btn" id="musicToggleBtn" title="음악 켜기">🔇</button>
         <button class="ctrl-btn" id="themeToggle" title="다크/라이트 모드 전환">🌙</button>
+      </div>
+    </div>
+    <!-- Search Bar -->
+    <div class="search-bar-wrap">
+      <div class="search-inner">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            class="search-input"
+            id="searchInput"
+            placeholder="도시 이름으로 검색 (예: 도쿄, 파리, 뉴욕...)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="search-clear hidden" id="searchClear" title="지우기">✕</button>
+        </div>
+        <button class="search-btn" id="searchBtn">검색</button>
+        <button class="ctrl-btn location-btn hidden" id="myLocationBtn" title="현재 위치로 돌아가기">📍 내 위치</button>
+        <ul class="search-suggestions hidden" id="searchSuggestions"></ul>
       </div>
     </div>
   </header>
@@ -114,14 +133,9 @@
           <div class="footer-reason" id="footerReason">--</div>
         </div>
       </div>
-      <div class="footer-credit">오날입 · 날씨 데이터: 기상청 단기예보 (공공데이터포털) &amp; Nominatim (OpenStreetMap)</div>
+      <div class="footer-credit">오날입 · 날씨 데이터: Open-Meteo &amp; Nominatim (OpenStreetMap)</div>
     </div>
   </footer>
-
-  <!-- Music Hint Toast -->
-  <div class="music-hint hidden" id="musicHint">
-    🎵 음악 버튼을 눌러 날씨 BGM을 켜보세요!
-  </div>
 
   <script src="script.js"></script>
 </body>

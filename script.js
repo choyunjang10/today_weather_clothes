@@ -1,113 +1,16 @@
 /**
  * 오날입 — script.js
  * 날씨 기반 옷차림 추천 로직
- * API: 기상청 단기예보 (공공데이터포털) + Nominatim (역지오코딩)
+ * API: Open-Meteo (무료, 키 불필요) + Nominatim (역지오코딩)
  */
-
-// ── 기상청 API 설정 ────────────────────────────────────
-const KMA_API_KEY = '284fbaf80e75d311df67dccdc7e8d7a42b0502a9d496733ed46ffb17898d4913';
-const KMA_BASE_URL = 'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst';
-
-// ── 날씨별 배경음악 (Internet Archive / CC0 무료 음원) ───────
-// 모두 Creative Commons / Public Domain 라이선스
-const MUSIC_MAP = {
-  clear: {
-    // 맑음 — 밝고 따뜻한 lofi 재즈
-    url: 'https://archive.org/download/kalaido-hanging-lanterns_202101/%28no%20copyright%20music%29%20jazz%20type%20beat%20bread%20royalty%20free%20youtube%20music%20prod.%20by%20lukrembo.mp3',
-    label: '☀️ Sunny Lofi Jazz',
-  },
-  cloudy: {
-    // 흐림 — 차분하고 몽환적인 ambient
-    url: 'https://archive.org/download/kalaido-hanging-lanterns_202101/%5BNon%20Copyrighted%20Music%5D%20Artificial.Music%20-%20Herbal%20Tea%20%5BLo-fi%5D.mp3',
-    label: '⛅ Cloudy Lofi Chill',
-  },
-  rain: {
-    // 비 — 잔잔한 lofi hip-hop
-    url: 'https://archive.org/download/kalaido-hanging-lanterns_202101/%5BNo%20Copyright%20Music%5D%20Chill%20Jazzy%20Lofi%20Hip-Hop%20Beat%20%28Copyright%20Free%29%20Music%20By%20KaizanBlu.mp3',
-    label: '🌧 Rainy Lofi Hip-Hop',
-  },
-  snow: {
-    // 눈 — 조용하고 따뜻한 ambient lofi
-    url: 'https://archive.org/download/kalaido-hanging-lanterns_202101/finite%20-%20Lofi%20Hip%20Hop%20Beat%20%28FREE%20FOR%20PROFIT%20USE%29.mp3',
-    label: '❄️ Snowy Ambient Lofi',
-  },
-};
-
-// ── 음악 플레이어 상태 ────────────────────────────────────
-let audioPlayer = null;
-let currentMusicType = null;
-let musicEnabled = true; // 사용자가 끄기 전까지 자동재생 시도
-
-function initAudio(weatherType) {
-  const music = MUSIC_MAP[weatherType] || MUSIC_MAP.clear;
-  if (currentMusicType === weatherType && audioPlayer) return; // 이미 재생 중
-
-  // 기존 플레이어 정리
-  if (audioPlayer) {
-    audioPlayer.pause();
-    audioPlayer = null;
-  }
-
-  currentMusicType = weatherType;
-  audioPlayer = new Audio(music.url);
-  audioPlayer.loop = true;
-  audioPlayer.volume = 0.35;
-
-  // 음악 버튼 라벨 업데이트
-  updateMusicBtn(music.label);
-
-  if (musicEnabled) {
-    const playPromise = audioPlayer.play();
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          setMusicBtnState(true);
-        })
-        .catch(() => {
-          // 브라우저 자동재생 정책에 막힌 경우 → 버튼으로 유도
-          setMusicBtnState(false);
-          showMusicHint();
-        });
-    }
-  }
-}
-
-function updateMusicBtn(label) {
-  const btn = document.getElementById('musicToggleBtn');
-  if (btn) btn.dataset.label = label;
-}
-
-function setMusicBtnState(isPlaying) {
-  const btn = document.getElementById('musicToggleBtn');
-  if (!btn) return;
-  btn.textContent = isPlaying ? '🔊' : '🔇';
-  btn.title = isPlaying ? '음악 끄기' : '음악 켜기';
-  btn.classList.toggle('music-off', !isPlaying);
-}
-
-function showMusicHint() {
-  const hint = document.getElementById('musicHint');
-  if (hint) {
-    hint.classList.remove('hidden');
-    setTimeout(() => hint.classList.add('hidden'), 4000);
-  }
-}
-
-function toggleMusic() {
-  if (!audioPlayer) return;
-  if (audioPlayer.paused) {
-    audioPlayer.play().then(() => setMusicBtnState(true)).catch(() => {});
-    musicEnabled = true;
-  } else {
-    audioPlayer.pause();
-    setMusicBtnState(false);
-    musicEnabled = false;
-  }
-}
 
 // ── 상태 ──────────────────────────────────────────────
 let isCelsius = true;
 let currentTemp = null; // 항상 섭씨로 저장
+let isUsingGPS = true;  // GPS 위치 사용 중 여부
+let suggestTimeout = null;
+let suggestResults = [];
+let activeSuggestion = -1;
 
 // ── DOM ───────────────────────────────────────────────
 const loadingState   = document.getElementById('loadingState');
@@ -139,21 +42,40 @@ const footerReason   = document.getElementById('footerReason');
 
 const unitToggle     = document.getElementById('unitToggle');
 const themeToggle    = document.getElementById('themeToggle');
+const searchInput    = document.getElementById('searchInput');
+const searchBtn      = document.getElementById('searchBtn');
+const searchClear    = document.getElementById('searchClear');
+const searchSuggestions = document.getElementById('searchSuggestions');
+const myLocationBtn  = document.getElementById('myLocationBtn');
 
-// ── 기상청 PTY(강수형태) + SKY(하늘상태) 코드 해석 ──────
-// PTY: 0=없음, 1=비, 2=비/눈, 3=눈, 4=소나기
-// SKY: 1=맑음, 3=구름많음, 4=흐림
-function parseKMAWeather(pty, sky) {
-  if (pty === 1) return { desc: '비',       emoji: '🌧', type: 'rain' };
-  if (pty === 2) return { desc: '비/눈',    emoji: '🌨', type: 'snow' };
-  if (pty === 3) return { desc: '눈',       emoji: '❄️', type: 'snow' };
-  if (pty === 4) return { desc: '소나기',   emoji: '🌦', type: 'rain' };
-  // 강수 없을 때 하늘 상태
-  if (sky === 1) return { desc: '맑음',     emoji: '☀️', type: 'clear' };
-  if (sky === 3) return { desc: '구름많음', emoji: '⛅️', type: 'cloudy' };
-  if (sky === 4) return { desc: '흐림',     emoji: '☁️', type: 'cloudy' };
-  return { desc: '맑음', emoji: '🌤', type: 'clear' };
-}
+// ── WMO 날씨 코드 해석 ────────────────────────────────
+// Open-Meteo uses WMO Weather interpretation codes
+const WMO = {
+  0:  { desc: '맑음',          emoji: '☀️',  type: 'clear' },
+  1:  { desc: '대체로 맑음',   emoji: '🌤',  type: 'clear' },
+  2:  { desc: '구름 조금',     emoji: '⛅️',  type: 'cloudy' },
+  3:  { desc: '흐림',          emoji: '☁️',  type: 'cloudy' },
+  45: { desc: '안개',          emoji: '🌫',  type: 'fog' },
+  48: { desc: '안개',          emoji: '🌫',  type: 'fog' },
+  51: { desc: '이슬비',        emoji: '🌦',  type: 'drizzle' },
+  53: { desc: '이슬비',        emoji: '🌦',  type: 'drizzle' },
+  55: { desc: '이슬비',        emoji: '🌧',  type: 'drizzle' },
+  61: { desc: '비',            emoji: '🌧',  type: 'rain' },
+  63: { desc: '비',            emoji: '🌧',  type: 'rain' },
+  65: { desc: '강한 비',       emoji: '🌧',  type: 'rain' },
+  71: { desc: '눈',            emoji: '🌨',  type: 'snow' },
+  73: { desc: '눈',            emoji: '❄️',  type: 'snow' },
+  75: { desc: '강한 눈',       emoji: '❄️',  type: 'snow' },
+  77: { desc: '우박',          emoji: '🌨',  type: 'snow' },
+  80: { desc: '소나기',        emoji: '🌦',  type: 'rain' },
+  81: { desc: '소나기',        emoji: '🌧',  type: 'rain' },
+  82: { desc: '강한 소나기',   emoji: '⛈',  type: 'rain' },
+  85: { desc: '눈 소나기',     emoji: '🌨',  type: 'snow' },
+  86: { desc: '강한 눈 소나기',emoji: '❄️',  type: 'snow' },
+  95: { desc: '천둥번개',      emoji: '⛈',  type: 'thunder' },
+  96: { desc: '뇌우',          emoji: '⛈',  type: 'thunder' },
+  99: { desc: '강한 뇌우',     emoji: '⛈',  type: 'thunder' },
+};
 
 // ── 옷 추천 로직 ──────────────────────────────────────
 function getOutfitRecommendation(tempC, weatherType) {
@@ -259,16 +181,16 @@ function renderWeather(data) {
   dateWrap.innerHTML = `${dateStr}<br/>${timeStr} 기준`;
 
   // 날씨 기본 정보
-  const weather = parseKMAWeather(data.pty, data.sky);
-  weatherEmoji.textContent = weather.emoji;
-  weatherDesc.textContent = weather.desc;
+  const wmo = WMO[data.weatherCode] || { desc: '날씨 정보 없음', emoji: '🌡', type: 'clear' };
+  weatherEmoji.textContent = wmo.emoji;
+  weatherDesc.textContent = wmo.desc;
   humidity.textContent = `${data.humidity}%`;
   windSpeed.textContent = `${data.wind} m/s`;
   tempMain.textContent = displayTemp(data.temp);
   tempFeel.textContent = displayTemp(data.feels_like);
 
   // 코디 추천
-  const outfit = getOutfitRecommendation(data.temp, weather.type);
+  const outfit = getOutfitRecommendation(data.temp, wmo.type);
   outfitMessage.textContent = outfit.message;
   outfitTopIcon.textContent = outfit.topIcon;
   outfitTopVal.textContent = outfit.top;
@@ -286,9 +208,6 @@ function renderWeather(data) {
   }
 
   footerReason.textContent = outfit.reason;
-
-  // 배경음악 재생
-  initAudio(weather.type);
 
   // 화면 전환
   loadingState.classList.add('hidden');
@@ -315,129 +234,101 @@ async function getLocationName(lat, lon) {
   }
 }
 
-// ── 위도/경도 → 기상청 격자 좌표 변환 ────────────────────
-// 기상청 공식 변환 알고리즘 (Lambert Conformal Conic)
-function latLonToGrid(lat, lon) {
-  const RE = 6371.00877;   // 지구 반경 (km)
-  const GRID = 5.0;        // 격자 간격 (km)
-  const SLAT1 = 30.0;      // 표준위도 1
-  const SLAT2 = 60.0;      // 표준위도 2
-  const OLON = 126.0;      // 기준점 경도
-  const OLAT = 38.0;       // 기준점 위도
-  const XO = 43;           // 기준점 X 격자
-  const YO = 136;          // 기준점 Y 격자
-
-  const DEGRAD = Math.PI / 180.0;
-  const re = RE / GRID;
-  const slat1 = SLAT1 * DEGRAD;
-  const slat2 = SLAT2 * DEGRAD;
-  const olon  = OLON  * DEGRAD;
-  const olat  = OLAT  * DEGRAD;
-
-  let sn = Math.tan(Math.PI * 0.25 + slat2 * 0.5) / Math.tan(Math.PI * 0.25 + slat1 * 0.5);
-  sn = Math.log(Math.cos(slat1) / Math.cos(slat2)) / Math.log(sn);
-  let sf = Math.tan(Math.PI * 0.25 + slat1 * 0.5);
-  sf = Math.pow(sf, sn) * Math.cos(slat1) / sn;
-  let ro = Math.tan(Math.PI * 0.25 + olat * 0.5);
-  ro = re * sf / Math.pow(ro, sn);
-
-  const ra = Math.tan(Math.PI * 0.25 + lat * DEGRAD * 0.5);
-  const r  = re * sf / Math.pow(ra, sn);
-  let theta = lon * DEGRAD - olon;
-  if (theta > Math.PI)  theta -= 2.0 * Math.PI;
-  if (theta < -Math.PI) theta += 2.0 * Math.PI;
-  theta *= sn;
-
-  return {
-    x: Math.floor(r * Math.sin(theta) + XO + 0.5),
-    y: Math.floor(ro - r * Math.cos(theta) + YO + 0.5),
-  };
-}
-
-// ── 기상청 발표시각 계산 ──────────────────────────────────
-// 초단기실황은 매 정시 발표, 약 10분 후 제공
-function getBaseDateTime() {
-  const now = new Date();
-  // 현재 시각에서 10분 전으로 안전마진 적용
-  now.setMinutes(now.getMinutes() - 10);
-
-  const yyyy = now.getFullYear();
-  const mm   = String(now.getMonth() + 1).padStart(2, '0');
-  const dd   = String(now.getDate()).padStart(2, '0');
-  const hh   = String(now.getHours()).padStart(2, '0');
-
-  return {
-    baseDate: `${yyyy}${mm}${dd}`,
-    baseTime: `${hh}00`,
-  };
-}
-
-// ── 기상청 초단기실황 API ─────────────────────────────────
+// ── Open-Meteo API ────────────────────────────────────
 async function fetchWeather(lat, lon) {
-  const { x, y } = latLonToGrid(lat, lon);
-  const { baseDate, baseTime } = getBaseDateTime();
-
-  const params = new URLSearchParams({
-    serviceKey: KMA_API_KEY,
-    pageNo: '1',
-    numOfRows: '10',
-    dataType: 'JSON',
-    base_date: baseDate,
-    base_time: baseTime,
-    nx: x,
-    ny: y,
-  });
-
-  const res = await fetch(`${KMA_BASE_URL}?${params}`);
-  if (!res.ok) throw new Error(`기상청 API 오류: ${res.status}`);
-
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code` +
+    `&wind_speed_unit=ms&timezone=auto`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('날씨 데이터를 가져올 수 없습니다.');
   const json = await res.json();
-  const header = json?.response?.header;
-  if (header?.resultCode !== '00') {
-    throw new Error(`기상청 응답 오류: ${header?.resultMsg || '알 수 없는 오류'}`);
-  }
-
-  const items = json.response.body.items.item;
-
-  // 카테고리별 값 추출
-  const get = (cat) => {
-    const item = items.find(i => i.category === cat);
-    return item ? parseFloat(item.obsrValue) : null;
-  };
-
-  const T1H  = get('T1H');   // 기온 (°C)
-  const REH  = get('REH');   // 습도 (%)
-  const WSD  = get('WSD');   // 풍속 (m/s)
-  const PTY  = get('PTY');   // 강수형태 (0=없음, 1=비, 2=비/눈, 3=눈, 4=소나기)
-  const SKY  = get('SKY');   // 하늘상태 (1=맑음, 3=구름많음, 4=흐림) — 초단기실황 미제공 시 null
-  const RN1  = get('RN1');   // 1시간 강수량
-
-  // 체감온도: 풍속이 있을 때 바람냉각지수 적용 (간이 계산)
-  let feelsLike = T1H;
-  if (T1H !== null && WSD !== null) {
-    if (T1H <= 10 && WSD >= 1.3) {
-      // 바람 냉각 지수 (Wind Chill)
-      feelsLike = 13.12 + 0.6215 * T1H - 11.37 * Math.pow(WSD * 3.6, 0.16) + 0.3965 * T1H * Math.pow(WSD * 3.6, 0.16);
-      feelsLike = Math.round(feelsLike * 10) / 10;
-    } else if (T1H >= 27 && REH !== null) {
-      // 열지수 (Heat Index) 간이 계산
-      feelsLike = -8.78469475556 + 1.61139411 * T1H + 2.3385472 * REH
-        - 0.14611605 * T1H * REH - 0.012308094 * T1H * T1H
-        - 0.016424828 * REH * REH + 0.002211732 * T1H * T1H * REH
-        + 0.00072546 * T1H * REH * REH - 0.000003582 * T1H * T1H * REH * REH;
-      feelsLike = Math.round(feelsLike * 10) / 10;
-    }
-  }
-
+  const c = json.current;
   return {
-    temp:       T1H ?? 0,
-    feels_like: feelsLike ?? T1H ?? 0,
-    humidity:   REH ?? 0,
-    wind:       WSD !== null ? Math.round(WSD * 10) / 10 : 0,
-    pty:        PTY ?? 0,
-    sky:        SKY ?? 1,
-    rn1:        RN1,
+    temp:        c.temperature_2m,
+    feels_like:  c.apparent_temperature,
+    humidity:    c.relative_humidity_2m,
+    wind:        Math.round(c.wind_speed_10m * 10) / 10,
+    weatherCode: c.weather_code,
   };
+}
+
+// ── 지역 검색 (Nominatim) ─────────────────────────────
+async function searchLocation(query) {
+  if (!query.trim()) return [];
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&accept-language=ko,en`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'OnalipWeatherApp/1.0' } });
+  const data = await res.json();
+  return data.map(item => ({
+    name: item.display_name.split(',')[0].trim(),
+    sub: item.display_name.split(',').slice(1, 3).join(',').trim(),
+    lat: parseFloat(item.lat),
+    lon: parseFloat(item.lon),
+  }));
+}
+
+function renderSuggestions(results) {
+  suggestResults = results;
+  activeSuggestion = -1;
+  if (!results.length) {
+    searchSuggestions.classList.add('hidden');
+    return;
+  }
+  searchSuggestions.innerHTML = results.map((r, i) => `
+    <li class="suggestion-item" data-index="${i}">
+      <span class="suggestion-pin">📍</span>
+      <span class="suggestion-main">${r.name}</span>
+      <span class="suggestion-sub">${r.sub}</span>
+    </li>
+  `).join('');
+  searchSuggestions.classList.remove('hidden');
+
+  searchSuggestions.querySelectorAll('.suggestion-item').forEach(el => {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const idx = parseInt(el.dataset.index);
+      selectSuggestion(idx);
+    });
+  });
+}
+
+function selectSuggestion(idx) {
+  const item = suggestResults[idx];
+  if (!item) return;
+  searchInput.value = item.name;
+  searchSuggestions.classList.add('hidden');
+  searchClear.classList.remove('hidden');
+  loadSearchedLocation(item.lat, item.lon, item.name);
+}
+
+function highlightSuggestion(idx) {
+  const items = searchSuggestions.querySelectorAll('.suggestion-item');
+  items.forEach((el, i) => el.classList.toggle('active', i === idx));
+}
+
+async function loadSearchedLocation(lat, lon, name) {
+  isUsingGPS = false;
+  myLocationBtn.classList.remove('hidden');
+  searchSuggestions.classList.add('hidden');
+  searchBtn.disabled = true;
+  searchBtn.textContent = '검색 중...';
+
+  // 로딩 표시 (부드럽게)
+  mainContent.classList.add('hidden');
+  footerSection.classList.add('hidden');
+  loadingState.classList.remove('hidden');
+  errorState.classList.add('hidden');
+
+  try {
+    const weather = await fetchWeather(lat, lon);
+    locationName.textContent = name;
+    renderWeather(weather);
+  } catch (e) {
+    showError('날씨 정보를 불러오는 중 오류가 발생했습니다.');
+    console.error(e);
+  } finally {
+    searchBtn.disabled = false;
+    searchBtn.textContent = '검색';
+  }
 }
 
 // ── 위치 가져오기 ─────────────────────────────────────
@@ -489,9 +380,97 @@ async function init() {
 
 // ── 이벤트 리스너 ─────────────────────────────────────
 
-// 음악 토글 버튼
-const musicToggleBtn = document.getElementById('musicToggleBtn');
-if (musicToggleBtn) musicToggleBtn.addEventListener('click', toggleMusic);
+// 검색 입력
+searchInput.addEventListener('input', () => {
+  const val = searchInput.value.trim();
+  searchClear.classList.toggle('hidden', !val);
+  clearTimeout(suggestTimeout);
+  if (!val) { searchSuggestions.classList.add('hidden'); return; }
+  suggestTimeout = setTimeout(async () => {
+    try {
+      const results = await searchLocation(val);
+      renderSuggestions(results);
+    } catch { /* 자동완성 실패는 조용히 */ }
+  }, 320);
+});
+
+// 키보드 내비게이션
+searchInput.addEventListener('keydown', (e) => {
+  const items = suggestResults;
+  if (!items.length || searchSuggestions.classList.contains('hidden')) {
+    if (e.key === 'Enter') handleSearch();
+    return;
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeSuggestion = Math.min(activeSuggestion + 1, items.length - 1);
+    highlightSuggestion(activeSuggestion);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeSuggestion = Math.max(activeSuggestion - 1, -1);
+    highlightSuggestion(activeSuggestion);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (activeSuggestion >= 0) selectSuggestion(activeSuggestion);
+    else handleSearch();
+  } else if (e.key === 'Escape') {
+    searchSuggestions.classList.add('hidden');
+  }
+});
+
+// 바깥 클릭 시 자동완성 닫기
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-inner')) {
+    searchSuggestions.classList.add('hidden');
+  }
+});
+
+// 검색 버튼
+searchBtn.addEventListener('click', handleSearch);
+
+// 지우기 버튼
+searchClear.addEventListener('click', () => {
+  searchInput.value = '';
+  searchClear.classList.add('hidden');
+  searchSuggestions.classList.add('hidden');
+  searchInput.focus();
+});
+
+// 내 위치 버튼
+myLocationBtn.addEventListener('click', () => {
+  isUsingGPS = true;
+  myLocationBtn.classList.add('hidden');
+  searchInput.value = '';
+  searchClear.classList.add('hidden');
+  mainContent.classList.add('hidden');
+  footerSection.classList.add('hidden');
+  loadingState.classList.remove('hidden');
+  errorState.classList.add('hidden');
+  init();
+});
+
+async function handleSearch() {
+  const query = searchInput.value.trim();
+  if (!query) return;
+  searchSuggestions.classList.add('hidden');
+  searchBtn.disabled = true;
+  searchBtn.textContent = '검색 중...';
+  try {
+    const results = await searchLocation(query);
+    if (!results.length) {
+      alert(`"${query}"에 해당하는 위치를 찾을 수 없어요. 다른 이름으로 검색해보세요.`);
+      return;
+    }
+    const first = results[0];
+    loadSearchedLocation(first.lat, first.lon, first.name);
+  } catch (e) {
+    alert('검색 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+    console.error(e);
+  } finally {
+    searchBtn.disabled = false;
+    searchBtn.textContent = '검색';
+  }
+}
 
 // 온도 단위 전환
 unitToggle.addEventListener('click', () => {
